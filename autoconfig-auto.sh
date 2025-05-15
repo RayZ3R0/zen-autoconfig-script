@@ -13,6 +13,16 @@ NC='\033[0m' # No Color
 BACKUP_DATE=$(date +"%Y%m%d_%H%M%S")
 BACKUP_DIR="$HOME/.fx-autoconfig-backups/$BACKUP_DATE"
 
+# Detect OS
+detect_os() {
+    if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" || "$OSTYPE" == "win32" ]]; then
+        OS="windows"
+    else
+        OS="linux"
+    fi
+    echo -e "${BLUE}Detected operating system:${NC} $OS"
+}
+
 print_header() {
     echo -e "\n${BLUE}=============================================${NC}"
     echo -e "${BLUE}   fx-autoconfig Interactive Installer${NC}"
@@ -24,7 +34,14 @@ print_header() {
 # Function to create backups
 backup_file() {
     local file=$1
-    local backup_path="$BACKUP_DIR/$(dirname "$file" | sed 's/^\///')"
+    local backup_path
+
+    if [[ "$OS" == "windows" ]]; then
+        # Convert Windows path to a structure suitable for the backup directory
+        backup_path="$BACKUP_DIR/$(echo "${file//\\//}" | sed 's/://')"
+    else
+        backup_path="$BACKUP_DIR/$(dirname "$file" | sed 's/^\///')"
+    fi
 
     if [ -f "$file" ]; then
         mkdir -p "$backup_path"
@@ -76,26 +93,58 @@ restore_backup() {
     # Find and restore program files
     find "$selected_backup" -type f -name "config.js" | while read -r config_js; do
         local rel_path=$(echo "$config_js" | sed "s|$selected_backup/||")
-        local target="/$rel_path"
+        local target
+        
+        if [[ "$OS" == "windows" ]]; then
+            # Convert back to Windows path format
+            drive_letter=$(echo "$rel_path" | cut -d'/' -f1)
+            rest_of_path=$(echo "$rel_path" | cut -d'/' -f2-)
+            target="$drive_letter:/$rest_of_path"
+            target="${target//\//\\}"
+        else
+            target="/$rel_path"
+        fi
+        
         local target_dir=$(dirname "$target")
 
         if [ -n "$BROWSER_PATH" ] && [[ "$target" == *"$BROWSER_PATH"* ]]; then
             echo -e "${YELLOW}Restoring:${NC} $target"
-            sudo mkdir -p "$target_dir"
-            sudo cp "$config_js" "$target"
+            if [[ "$OS" == "windows" ]]; then
+                mkdir -p "$target_dir"
+                cp "$config_js" "$target"
+            else
+                sudo mkdir -p "$target_dir"
+                sudo cp "$config_js" "$target"
+            fi
         fi
     done
 
     # Find and restore config-prefs.js files
     find "$selected_backup" -type f -name "config-prefs.js" | while read -r prefs_js; do
         local rel_path=$(echo "$prefs_js" | sed "s|$selected_backup/||")
-        local target="/$rel_path"
+        local target
+        
+        if [[ "$OS" == "windows" ]]; then
+            # Convert back to Windows path format
+            drive_letter=$(echo "$rel_path" | cut -d'/' -f1)
+            rest_of_path=$(echo "$rel_path" | cut -d'/' -f2-)
+            target="$drive_letter:/$rest_of_path"
+            target="${target//\//\\}"
+        else
+            target="/$rel_path"
+        fi
+        
         local target_dir=$(dirname "$target")
 
         if [ -n "$BROWSER_PATH" ] && [[ "$target" == *"$BROWSER_PATH"* ]]; then
             echo -e "${YELLOW}Restoring:${NC} $target"
-            sudo mkdir -p "$target_dir"
-            sudo cp "$prefs_js" "$target"
+            if [[ "$OS" == "windows" ]]; then
+                mkdir -p "$target_dir"
+                cp "$prefs_js" "$target"
+            else
+                sudo mkdir -p "$target_dir"
+                sudo cp "$prefs_js" "$target"
+            fi
         fi
     done
 
@@ -127,27 +176,82 @@ detect_browsers() {
     local browser_names=()
     local unique_paths=()
 
-    # Detect standard locations
-    local locations=(
-        "/usr/lib/firefox"
-        "/usr/lib64/firefox"
-        "/opt/firefox"
-        "/usr/lib/firefox-esr"
-        "/opt/waterfox"
-        "/opt/librewolf"
-        "/opt/zen-browser"
-        "/opt/zen-browser-bin"
-        "/opt/zen-twilight"
-        "/opt/zen-twilight-bin"
-        "/Applications/Firefox.app/Contents/MacOS"
-        "/Applications/Firefox Nightly.app/Contents/Resources"
-    )
+    if [[ "$OS" == "windows" ]]; then
+        # Windows browser detection
+        local win_locations=(
+            "/c/Program Files/Mozilla Firefox"
+            "/c/Program Files (x86)/Mozilla Firefox"
+            "/c/Program Files/Waterfox"
+            "/c/Program Files (x86)/Waterfox"
+            "/c/Program Files/LibreWolf"
+            "/c/Program Files (x86)/LibreWolf"
+            "/c/Program Files/Zen Browser"
+            "/c/Program Files (x86)/Zen Browser"
+            "/c/Program Files/Zen Twilight"
+            "/c/Program Files (x86)/Zen Twilight"
+        )
+        
+        # Convert Windows paths to proper format if not running in WSL/Cygwin
+        if [[ "$OSTYPE" != "msys" && "$OSTYPE" != "cygwin" ]]; then
+            local win_real_locations=(
+                "C:\\Program Files\\Mozilla Firefox"
+                "C:\\Program Files (x86)\\Mozilla Firefox"
+                "C:\\Program Files\\Waterfox"
+                "C:\\Program Files (x86)\\Waterfox"
+                "C:\\Program Files\\LibreWolf"
+                "C:\\Program Files (x86)\\LibreWolf"
+                "C:\\Program Files\\Zen Browser"
+                "C:\\Program Files (x86)\\Zen Browser"
+                "C:\\Program Files\\Zen Twilight"
+                "C:\\Program Files (x86)\\Zen Twilight"
+            )
+            
+            # Check for Zen browsers using registry as a fallback
+            if command -v reg &>/dev/null; then
+                echo -e "${BLUE}Checking Windows registry for browser installations...${NC}"
+                # Try to find Zen Browser from registry
+                zen_path=$(reg query "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\zenbrowser.exe" /ve 2>/dev/null | grep -i "REG_SZ" | awk '{print $3}')
+                if [ -n "$zen_path" ]; then
+                    win_real_locations+=("$(dirname "$zen_path")")
+                fi
+                
+                # Try to find Zen Twilight from registry
+                zen_twilight_path=$(reg query "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\zentwilight.exe" /ve 2>/dev/null | grep -i "REG_SZ" | awk '{print $3}')
+                if [ -n "$zen_twilight_path" ]; then
+                    win_real_locations+=("$(dirname "$zen_twilight_path")")
+                fi
+            fi
+        fi
+        
+        local locations=()
+        if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
+            locations=("${win_locations[@]}")
+        else
+            locations=("${win_real_locations[@]}")
+        fi
+    else
+        # Linux detection
+        local locations=(
+            "/usr/lib/firefox"
+            "/usr/lib64/firefox"
+            "/opt/firefox"
+            "/usr/lib/firefox-esr"
+            "/opt/waterfox"
+            "/opt/librewolf"
+            "/opt/zen-browser"
+            "/opt/zen-browser-bin"
+            "/opt/zen-twilight"
+            "/opt/zen-twilight-bin"
+            "/Applications/Firefox.app/Contents/MacOS"
+            "/Applications/Firefox Nightly.app/Contents/Resources"
+        )
 
-    # Also check for any executables in /opt with firefox/zen in the name
-    mapfile -t opt_browsers < <(find /opt -maxdepth 2 -name "*firefox*" -type d 2>/dev/null)
-    mapfile -t zen_browsers < <(find /opt -maxdepth 2 -name "*zen*" -type d 2>/dev/null)
+        # Also check for any executables in /opt with firefox/zen in the name
+        mapfile -t opt_browsers < <(find /opt -maxdepth 2 -name "*firefox*" -type d 2>/dev/null)
+        mapfile -t zen_browsers < <(find /opt -maxdepth 2 -name "*zen*" -type d 2>/dev/null)
 
-    locations+=("${opt_browsers[@]}" "${zen_browsers[@]}")
+        locations+=("${opt_browsers[@]}" "${zen_browsers[@]}")
+    fi
 
     # Look for browser binaries in these locations
     local i=1
@@ -155,25 +259,74 @@ detect_browsers() {
         # Skip if directory doesn't exist
         [ ! -d "$loc" ] && continue
 
-        # Check if this is a Firefox-based browser by looking for critical files
-        if [ -f "$loc/application.ini" ] || [ -f "$loc/omni.ja" ] || [ -f "$loc/firefox" ] || [ -f "$loc/firefox.exe" ] || [ -f "$loc/zen" ] || [ -f "$loc/zen-bin" ]; then
+        # Define executable names based on OS
+        local exe_extensions=()
+        if [[ "$OS" == "windows" ]]; then
+            exe_extensions=(".exe")
+        else
+            exe_extensions=("" "-bin")
+        fi
+        
+        # Check for Firefox-style browsers
+        local is_firefox_based=false
+        if [ -f "$loc/application.ini" ] || [ -f "$loc/omni.ja" ]; then
+            is_firefox_based=true
+        else
+            # Check for executables
+            for ext in "${exe_extensions[@]}"; do
+                if [ -f "$loc/firefox$ext" ] || [ -f "$loc/zentwilight$ext" ] || [ -f "$loc/zenbrowser$ext" ] || [ -f "$loc/zen$ext" ]; then
+                    is_firefox_based=true
+                    break
+                fi
+            done
+        fi
+        
+        # Verify it's truly a Zen browser if that's what we think it is
+        if [[ "$is_firefox_based" == true && ("$loc" == *"zen"* || "$loc" == *"Zen"*) ]]; then
+            # Additional verification for Zen browsers to avoid false positives
+            local is_zen_browser=false
+            
+            # Check for Zen-specific files or executables
+            for ext in "${exe_extensions[@]}"; do
+                if [ -f "$loc/zenbrowser$ext" ] || [ -f "$loc/zentwilight$ext" ] || [ -f "$loc/zen$ext" ]; then
+                    is_zen_browser=true
+                    break
+                fi
+            done
+            
+            # If it claims to be Zen but doesn't have Zen executables, verify further
+            if [[ "$is_zen_browser" == false ]]; then
+                # Check browser.ini or other Zen-specific identifiers
+                if [ -f "$loc/browser/browser.ini" ]; then
+                    grep -q "ZenBrowser" "$loc/browser/browser.ini" && is_zen_browser=true
+                fi
+            fi
+            
+            # Skip if we can't verify it's a Zen browser
+            if [[ "$is_zen_browser" == false ]]; then
+                echo -e "${YELLOW}Skipping potential false positive Zen browser at:${NC} $loc"
+                continue
+            fi
+        fi
+
+        if [[ "$is_firefox_based" == true ]]; then
             # Determine the browser name
             local name
             if [[ "$loc" == *"firefox-esr"* ]]; then
                 name="Firefox ESR"
             elif [[ "$loc" == *"firefox-beta"* || "$loc" == *"firefox-developer"* ]]; then
                 name="Firefox Beta"
-            elif [[ "$loc" == *"firefox"* ]]; then
+            elif [[ "$loc" == *"firefox"* || "$loc" == *"Firefox"* ]]; then
                 name="Firefox"
-            elif [[ "$loc" == *"waterfox"* ]]; then
+            elif [[ "$loc" == *"waterfox"* || "$loc" == *"Waterfox"* ]]; then
                 name="Waterfox"
-            elif [[ "$loc" == *"librewolf"* ]]; then
+            elif [[ "$loc" == *"librewolf"* || "$loc" == *"LibreWolf"* ]]; then
                 name="LibreWolf"
-            elif [[ "$loc" == *"zen-twilight"* ]]; then
+            elif [[ "$loc" == *"zen-twilight"* || "$loc" == *"Zen Twilight"* ]]; then
                 name="Zen Twilight"
-            elif [[ "$loc" == *"zen-browser"* ]]; then
+            elif [[ "$loc" == *"zen-browser"* || "$loc" == *"Zen Browser"* ]]; then
                 name="Zen Browser"
-            elif [[ "$loc" == *"zen"* ]]; then
+            elif [[ "$loc" == *"zen"* || "$loc" == *"Zen"* ]]; then
                 name="Zen Browser"
             else
                 name="Unknown Firefox-based browser"
@@ -250,21 +403,41 @@ detect_profiles() {
     local profile_names=()
     local profile_paths=()
 
-    # Check common profile locations based on the browser name
-    local mozilla_dir="$HOME/.mozilla"
-    local default_profile_dirs=(
-        "$HOME/.mozilla/firefox"
-        "$HOME/.zen"
-        "$HOME/.zen-browser"
-        "$HOME/.zen-twilight"
-        "$HOME/.librewolf"
-        "$HOME/.waterfox"
-        "$HOME/.config/firefox"
-    )
+    if [[ "$OS" == "windows" ]]; then
+        # Windows profile detection locations
+        local appdata="${APPDATA:-$HOME/AppData/Roaming}"
+        local localappdata="${LOCALAPPDATA:-$HOME/AppData/Local}"
+        
+        local default_profile_dirs=(
+            "$appdata/Mozilla/Firefox/Profiles"
+            "$localappdata/Mozilla/Firefox/Profiles"
+            "$appdata/Zen Browser/Profiles"
+            "$appdata/Zen Twilight/Profiles"
+            "$appdata/Waterfox/Profiles"
+            "$appdata/LibreWolf/Profiles"
+        )
+        
+        # Try to find Zen-specific profiles for Zen browsers
+        if [[ "$BROWSER_NAME" == *"Zen"* ]]; then
+            default_profile_dirs+=("$appdata/Zen Browser/Profiles" "$appdata/Zen Twilight/Profiles")
+        fi
+    else
+        # Linux profile detection locations
+        local mozilla_dir="$HOME/.mozilla"
+        local default_profile_dirs=(
+            "$HOME/.mozilla/firefox"
+            "$HOME/.zen"
+            "$HOME/.zen-browser"
+            "$HOME/.zen-twilight"
+            "$HOME/.librewolf"
+            "$HOME/.waterfox"
+            "$HOME/.config/firefox"
+        )
 
-    # Add browser-specific locations
-    if [[ "$BROWSER_NAME" == *"Zen"* ]]; then
-        default_profile_dirs+=("$HOME/.zen")
+        # Add browser-specific locations
+        if [[ "$BROWSER_NAME" == *"Zen"* ]]; then
+            default_profile_dirs+=("$HOME/.zen")
+        fi
     fi
 
     # Find all profile directories
@@ -390,13 +563,21 @@ install_fx_autoconfig() {
     backup_file "$BROWSER_PATH/defaults/pref/config-prefs.js"
 
     # Copy program files
-    sudo mkdir -p "$BROWSER_PATH/defaults/pref"
-    sudo cp "$temp_dir/program/config.js" "$BROWSER_PATH/"
-    sudo cp "$temp_dir/program/defaults/pref/config-prefs.js" "$BROWSER_PATH/defaults/pref/"
-
-    # Set permissions
-    sudo chmod 644 "$BROWSER_PATH/config.js"
-    sudo chmod 644 "$BROWSER_PATH/defaults/pref/config-prefs.js"
+    if [[ "$OS" == "windows" ]]; then
+        mkdir -p "$BROWSER_PATH/defaults/pref"
+        cp "$temp_dir/program/config.js" "$BROWSER_PATH/"
+        cp "$temp_dir/program/defaults/pref/config-prefs.js" "$BROWSER_PATH/defaults/pref/"
+        
+        # Set permissions (Windows doesn't need chmod)
+    else
+        sudo mkdir -p "$BROWSER_PATH/defaults/pref"
+        sudo cp "$temp_dir/program/config.js" "$BROWSER_PATH/"
+        sudo cp "$temp_dir/program/defaults/pref/config-prefs.js" "$BROWSER_PATH/defaults/pref/"
+        
+        # Set permissions
+        sudo chmod 644 "$BROWSER_PATH/config.js"
+        sudo chmod 644 "$BROWSER_PATH/defaults/pref/config-prefs.js"
+    fi
 
     echo -e "${GREEN}✓ Program files installed!${NC}"
 
@@ -429,10 +610,12 @@ install_fx_autoconfig() {
         cp "$temp_dir/profile/chrome/utils/uc_api.sys.mjs" "$PROFILE_PATH/chrome/utils/"
     fi
 
-    # Set permissions
-    chmod -R 755 "$PROFILE_PATH/chrome"
-    chmod 644 "$PROFILE_PATH/chrome/utils"/*.mjs
-    chmod 644 "$PROFILE_PATH/chrome/utils/chrome.manifest"
+    # Set permissions - skip for Windows as it doesn't use chmod
+    if [[ "$OS" != "windows" ]]; then
+        chmod -R 755 "$PROFILE_PATH/chrome"
+        chmod 644 "$PROFILE_PATH/chrome/utils"/*.mjs
+        chmod 644 "$PROFILE_PATH/chrome/utils/chrome.manifest"
+    fi
 
     # Create a test script
     echo -e "${YELLOW}Creating a test script...${NC}"
@@ -472,7 +655,10 @@ install_fx_autoconfig() {
 })();
 EOF
 
-    chmod 644 "$PROFILE_PATH/chrome/JS/test.uc.js"
+    # Set permissions for the test script - skip for Windows
+    if [[ "$OS" != "windows" ]]; then
+        chmod 644 "$PROFILE_PATH/chrome/JS/test.uc.js"
+    fi
     echo -e "${GREEN}✓ Test script created!${NC}"
 
     # Clear startup cache
@@ -490,15 +676,29 @@ EOF
     echo -e "${YELLOW}Browser:${NC} $BROWSER_NAME at $BROWSER_PATH"
     echo -e "${YELLOW}Profile:${NC} $PROFILE_PATH"
     echo -e "${YELLOW}Backups:${NC} $BACKUP_DIR"
-    echo -e "\n${CYAN}To test if the installation works, follow these steps:${NC}"
-    echo -e "  ${CYAN}1. Launch your browser${NC}"
-    echo -e "  ${CYAN}2. Press Ctrl+Shift+J to open the Browser Console${NC}"
-    echo -e "  ${CYAN}3. Look for 'USERCHROME.JS TEST - MANAGER WORKING!' in the console${NC}"
-    echo -e "  ${CYAN}4. You should also see a green bar at the top of the browser window${NC}"
-    echo -e "\n${CYAN}If you don't see these indicators, try:${NC}"
-    echo -e "  ${CYAN}1. Go to about:support in the address bar${NC}"
-    echo -e "  ${CYAN}2. Find the 'Clear Startup Cache...' button in the top right${NC}"
-    echo -e "  ${CYAN}3. Click it and let the browser restart${NC}"
+    
+    # Show different instructions based on OS
+    if [[ "$OS" == "windows" ]]; then
+        echo -e "\n${CYAN}To test if the installation works, follow these steps:${NC}"
+        echo -e "  ${CYAN}1. Launch your browser${NC}"
+        echo -e "  ${CYAN}2. Press F12 or Ctrl+Shift+J to open the Browser Console${NC}"
+        echo -e "  ${CYAN}3. Look for 'USERCHROME.JS TEST - MANAGER WORKING!' in the console${NC}"
+        echo -e "  ${CYAN}4. You should also see a green bar at the top of the browser window${NC}"
+        echo -e "\n${CYAN}If you don't see these indicators, try:${NC}"
+        echo -e "  ${CYAN}1. Go to about:support in the address bar${NC}"
+        echo -e "  ${CYAN}2. Find the 'Clear Startup Cache...' button in the top right${NC}"
+        echo -e "  ${CYAN}3. Click it and let the browser restart${NC}"
+    else
+        echo -e "\n${CYAN}To test if the installation works, follow these steps:${NC}"
+        echo -e "  ${CYAN}1. Launch your browser${NC}"
+        echo -e "  ${CYAN}2. Press Ctrl+Shift+J to open the Browser Console${NC}"
+        echo -e "  ${CYAN}3. Look for 'USERCHROME.JS TEST - MANAGER WORKING!' in the console${NC}"
+        echo -e "  ${CYAN}4. You should also see a green bar at the top of the browser window${NC}"
+        echo -e "\n${CYAN}If you don't see these indicators, try:${NC}"
+        echo -e "  ${CYAN}1. Go to about:support in the address bar${NC}"
+        echo -e "  ${CYAN}2. Find the 'Clear Startup Cache...' button in the top right${NC}"
+        echo -e "  ${CYAN}3. Click it and let the browser restart${NC}"
+    fi
 
     return 0
 }
@@ -506,6 +706,7 @@ EOF
 # Main function
 main() {
     print_header
+    detect_os
 
     echo -e "${YELLOW}What would you like to do?${NC}"
     echo -e "${CYAN}1)${NC} Install fx-autoconfig"
