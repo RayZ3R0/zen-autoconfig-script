@@ -125,6 +125,7 @@ detect_browsers() {
     local browsers=()
     local browser_paths=()
     local browser_names=()
+    local unique_paths=()
 
     # Detect standard locations
     local locations=(
@@ -160,6 +161,8 @@ detect_browsers() {
             local name
             if [[ "$loc" == *"firefox-esr"* ]]; then
                 name="Firefox ESR"
+            elif [[ "$loc" == *"firefox-beta"* || "$loc" == *"firefox-developer"* ]]; then
+                name="Firefox Beta"
             elif [[ "$loc" == *"firefox"* ]]; then
                 name="Firefox"
             elif [[ "$loc" == *"waterfox"* ]]; then
@@ -175,12 +178,24 @@ detect_browsers() {
             else
                 name="Unknown Firefox-based browser"
             fi
-
-            # Add to our arrays
-            browsers+=("$i) $name ($loc)")
-            browser_paths+=("$loc")
-            browser_names+=("$name")
-            ((i++))
+            
+            # Check if we've already seen this path
+            local is_duplicate=false
+            for existing_path in "${unique_paths[@]}"; do
+                if [ "$existing_path" == "$loc" ]; then
+                    is_duplicate=true
+                    break
+                fi
+            done
+            
+            # Only add if it's not a duplicate
+            if [ "$is_duplicate" = false ]; then
+                unique_paths+=("$loc")
+                browsers+=("$i) $name ($loc)")
+                browser_paths+=("$loc")
+                browser_names+=("$name")
+                ((i++))
+            fi
         fi
     done
 
