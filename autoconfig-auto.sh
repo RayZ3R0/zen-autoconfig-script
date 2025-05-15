@@ -709,6 +709,95 @@ EOF
     return 0
 }
 
+# Function to install Sine
+install_sine() {
+    echo -e "\n${BLUE}Installing Sine...${NC}"
+    
+    # Check if fx-autoconfig is already installed
+    if [ ! -d "$PROFILE_PATH/chrome/utils" ] || [ ! -f "$PROFILE_PATH/chrome/utils/boot.sys.mjs" ]; then
+        echo -e "${YELLOW}fx-autoconfig doesn't appear to be installed. Installing it first...${NC}"
+        install_fx_autoconfig
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}Failed to install fx-autoconfig, which is required for Sine.${NC}"
+            return 1
+        fi
+    fi
+    
+    # Create a temporary directory for the clone
+    local temp_dir=$(mktemp -d)
+    
+    echo -e "${YELLOW}Downloading Sine...${NC}"
+    if ! git clone https://github.com/CosmoCreeper/Sine "$temp_dir"; then
+        echo -e "${RED}Failed to download Sine.${NC}"
+        rm -rf "$temp_dir"
+        return 1
+    fi
+    
+    echo -e "${GREEN}Download complete!${NC}"
+    
+    # Check if sine.uc.mjs exists in the repo
+    if [ ! -f "$temp_dir/sine.uc.mjs" ]; then
+        echo -e "${RED}Could not find sine.uc.mjs in the downloaded repository.${NC}"
+        echo -e "${YELLOW}Checking alternative locations...${NC}"
+        
+        # Try to find it elsewhere in the repo
+        local sine_file=$(find "$temp_dir" -name "sine.uc.mjs" | head -n 1)
+        
+        if [ -z "$sine_file" ]; then
+            echo -e "${RED}Could not find sine.uc.mjs anywhere in the repository.${NC}"
+            rm -rf "$temp_dir"
+            return 1
+        else
+            echo -e "${GREEN}Found sine.uc.mjs at:${NC} $sine_file"
+        fi
+    else
+        sine_file="$temp_dir/sine.uc.mjs"
+    fi
+    
+    # Create JS directory if it doesn't exist
+    mkdir -p "$PROFILE_PATH/chrome/JS"
+    
+    # Backup existing sine file if it exists
+    if [ -f "$PROFILE_PATH/chrome/JS/sine.uc.mjs" ]; then
+        backup_file "$PROFILE_PATH/chrome/JS/sine.uc.mjs"
+    fi
+    
+    # Copy sine.uc.mjs to the profile's JS directory
+    cp "$sine_file" "$PROFILE_PATH/chrome/JS/"
+    
+    echo -e "${GREEN}✓ Sine has been installed to:${NC} $PROFILE_PATH/chrome/JS/sine.uc.mjs"
+    
+    # Set permissions for the Sine script - skip for Windows
+    if [[ "$OS" != "windows" ]]; then
+        chmod 644 "$PROFILE_PATH/chrome/JS/sine.uc.mjs"
+    fi
+    
+    # Clear startup cache
+    echo -e "${YELLOW}Clearing startup cache...${NC}"
+    rm -rf "$PROFILE_PATH/startupCache" 2>/dev/null
+    rm -rf "$PROFILE_PATH/cache2" 2>/dev/null
+    echo -e "${GREEN}✓ Startup cache cleared!${NC}"
+    
+    # Clean up
+    rm -rf "$temp_dir"
+    
+    echo -e "\n${GREEN}=====================================${NC}"
+    echo -e "${GREEN}         Sine Installation Complete!${NC}"
+    echo -e "${GREEN}=====================================${NC}"
+    echo -e "${YELLOW}Browser:${NC} $BROWSER_NAME"
+    echo -e "${YELLOW}Profile:${NC} $PROFILE_PATH"
+    echo -e "${YELLOW}Sine installed to:${NC} $PROFILE_PATH/chrome/JS/sine.uc.mjs"
+    
+    # Show different instructions based on OS
+    echo -e "\n${CYAN}To start using Sine, follow these steps:${NC}"
+    echo -e "  ${CYAN}1. Launch your browser${NC}"
+    echo -e "  ${CYAN}2. Clear the startup cache by going to about:support and clicking 'Clear Startup Cache...'${NC}"
+    echo -e "  ${CYAN}3. When the browser restarts, Sine should be active${NC}"
+    echo -e "  ${CYAN}4. You can find Sine features in the browser settings or through its marketplace${NC}"
+    
+    return 0
+}
+
 # Main function
 main() {
     print_header
@@ -716,7 +805,8 @@ main() {
 
     echo -e "${YELLOW}What would you like to do?${NC}"
     echo -e "${CYAN}1)${NC} Install fx-autoconfig"
-    echo -e "${CYAN}2)${NC} Restore from backup"
+    echo -e "${CYAN}2)${NC} Install Sine (includes fx-autoconfig if needed)"
+    echo -e "${CYAN}3)${NC} Restore from backup"
     echo -e "${CYAN}q)${NC} Quit"
 
     read -r action
@@ -731,6 +821,14 @@ main() {
             fi
             ;;
         2)
+            if detect_browsers && detect_profiles; then
+                install_sine
+            else
+                echo -e "${RED}Installation failed.${NC}"
+                exit 1
+            fi
+            ;;
+        3)
             restore_backup
             ;;
         q|Q)
